@@ -1,0 +1,23 @@
+# AI Gateway Engine Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+
+business_api:
+  base_url: "http://127.0.0.1:8081"
+  timeout: "5s"
+  retry_attempts: 3
+
+cache:
+  type: "memory"      # memory | redis
+  ttl: "5m"           # 滑动TTL：5分钟（每次命中时刷新）
+  max_lifetime: "24h" # 硬过期：24小时（无论访问频率，强制失效）
+  max_size: 10000
+
+proxy:
+  timeout: "30s"
+  max_connections: 500
+  keep_alive: true
+  retry_attempts: 3  # 每个 endpoint 重试次数

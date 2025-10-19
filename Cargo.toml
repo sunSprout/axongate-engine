@@ -1,0 +1,54 @@
+[package]
+name = "ai-gateway-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# HTTP client and server
+hyper = { version = "0.14", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Caching
+dashmap = "5.5"
+moka = { version = "0.12", features = ["future"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+config = "0.13"
+humantime-serde = "1.1"
+
+# Utils
+bytes = "1.5"
+futures = "0.3"
+async-trait = "0.1"
+async-stream = "0.3"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Metrics
+metrics = "0.21"
+metrics-exporter-prometheus = "0.13"
+
+# Testing
+[dev-dependencies]
+mockito = "1.2"
+wiremock = "0.5"
+tower-test = "0.4"
