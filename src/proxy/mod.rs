@@ -7,7 +7,7 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Client, Response,
 };
-use tracing::debug;
+use tracing::{error, info};
 
 pub struct ProxyForwarder {
     client: Client,
@@ -73,7 +73,7 @@ impl ProxyForwarder {
         custom_path: Option<&str>,
         client_headers: &HeaderMap,
     ) -> Result<Response> {
-        debug!("tell me: will start send_request to {}", route_config.api_endpoint);
+        info!("send_request: start -> {}", route_config.api_endpoint);
 
         // 先复制客户端headers（已过滤敏感header）
         let mut headers = client_headers.clone();
@@ -149,12 +149,7 @@ impl ProxyForwarder {
 
         let url = format!("{}{}", base_url, api_path);
 
-        debug!("tell me: will send POST request to {}", url);
-        debug!("Sending request to upstream: {} {}", "POST", url);
-        debug!("Request headers: {:?}", headers);
-        debug!("Request body: {}", String::from_utf8_lossy(&request_body));
-
-        debug!("tell me: will execute http client request");
+        // request building logs removed to reduce noise
         let response = self
             .client
             .post(&url)
@@ -163,14 +158,9 @@ impl ProxyForwarder {
             .send()
             .await
             .map_err(|e| {
-                debug!("tell me: http client send failed: {:?}", e);
+                error!("HTTP client connection failed: {:?}", e);
                 Error::Http(e)
             })?;
-
-        debug!("tell me: received response with status {}", response.status());
-
-        debug!("Response status: {}", response.status());
-        debug!("Response headers: {:?}", response.headers());
 
         Ok(response)
     }
@@ -183,7 +173,10 @@ impl ProxyForwarder {
         custom_path: Option<&str>,
         client_headers: &HeaderMap,
     ) -> Result<Response> {
-        debug!("tell me: will start send_request to {} (stream)", route_config.api_endpoint);
+        info!(
+            "send_request_stream: start -> {}",
+            route_config.api_endpoint
+        );
 
         // 先复制客户端headers（已过滤敏感header）
         let mut headers = client_headers.clone();
@@ -246,12 +239,7 @@ impl ProxyForwarder {
 
         let url = format!("{}{}", base_url, api_path);
 
-        debug!("tell me: will send POST request to {} (stream)", url);
-        debug!("Sending request to upstream: {} {} (stream)", "POST", url);
-        debug!("Request headers: {:?}", headers);
-        debug!("Request body: {}", String::from_utf8_lossy(&request_body));
-
-        debug!("tell me: will execute http client request (stream)");
+        // request building logs removed to reduce noise
         let response = self
             .streaming_client
             .post(&url)
@@ -260,27 +248,27 @@ impl ProxyForwarder {
             .send()
             .await
             .map_err(|e| {
-                debug!("tell me: http client send failed (stream): {:?}", e);
+                error!("HTTP client connection failed (stream): {:?}", e);
                 Error::Http(e)
             })?;
-
-        debug!("tell me: received response with status {} (stream)", response.status());
-        debug!("Response status: {}", response.status());
-        debug!("Response headers: {:?}", response.headers());
 
         Ok(response)
     }
 
     // 处理非流式响应
     async fn process_response(&self, response: Response) -> Result<Bytes> {
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        if !status.is_success() {
             let body = response
                 .bytes()
                 .await
                 .unwrap_or_else(|_| Bytes::from("Failed to read error response"));
 
-            debug!("Error response body: {}", String::from_utf8_lossy(&body));
+            error!(
+                "Upstream error response (status {}): {}",
+                status,
+                String::from_utf8_lossy(&body)
+            );
 
             return Err(Error::Proxy(format!(
                 "Upstream returned error status {}: {}",
@@ -289,8 +277,8 @@ impl ProxyForwarder {
             )));
         }
 
+        info!("Upstream success response status: {}", status);
         let body = response.bytes().await.map_err(|e| Error::Http(e))?;
-        debug!("Success response body: {}", String::from_utf8_lossy(&body));
         Ok(body)
     }
 
@@ -318,21 +306,21 @@ impl ProxyForwarder {
         custom_path: Option<&str>,
         client_headers: &HeaderMap,
     ) -> Result<impl futures::Stream<Item = Result<Bytes>>> {
-        debug!("tell me: will start stream function");
+        info!("stream: start");
         // Use streaming client without global timeout
         let response = self.send_request_stream(route_config, request_body, custom_path, client_headers).await?;
-        debug!("tell me: send_request completed, got response");
+        // request sent successfully
 
-        if !response.status().is_success() {
-            debug!("tell me: response status is not success: {}", response.status());
-            let status = response.status();
+        let status = response.status();
+        if !status.is_success() {
             let body = response
                 .bytes()
                 .await
                 .unwrap_or_else(|_| Bytes::from("Failed to read error response"));
 
-            debug!(
-                "Stream error response body: {}",
+            error!(
+                "Upstream stream error response (status {}): {}",
+                status,
                 String::from_utf8_lossy(&body)
             );
 
@@ -344,21 +332,14 @@ impl ProxyForwarder {
         }
 
         // 返回纯粹的字节流，不包含任何框架依赖
-        debug!("tell me: will create bytes_stream from response");
+        info!("stream: established (status {})", status);
         let stream = response.bytes_stream().map(move |chunk| {
             match chunk {
-                Ok(bytes) => {
-                    debug!("tell me: received stream chunk with {} bytes", bytes.len());
-                    Ok(Bytes::from(bytes))
-                },
-                Err(e) => {
-                    debug!("tell me: stream chunk error: {:?}", e);
-                    Err(Error::Http(e))
-                }
+                Ok(bytes) => Ok(Bytes::from(bytes)),
+                Err(e) => Err(Error::Http(e))
             }
         });
-
-        debug!("tell me: will return stream");
+        info!("stream: ready to yield");
         Ok(stream)
     }
 

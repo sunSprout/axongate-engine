@@ -18,6 +18,7 @@ use axum::{
     Router as AxumRouter,
 };
 use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -32,9 +33,11 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志，设置为debug级别
+    // 初始化日志，支持通过环境变量配置，默认info级别
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     info!("Starting AI Gateway Engine...");
@@ -147,13 +150,6 @@ async fn handle_request(State(state): State<AppState>, req: Request<Body>) -> Re
     } else {
         "***".to_string()
     };
-    info!(
-        "Client request - Path: {}, Protocol: {:?}, Token: {}, Body: {}",
-        request_path,
-        client_protocol,
-        token_display,
-        String::from_utf8_lossy(&body_bytes)
-    );
 
     // 解析请求获取模型名
     let requested_model = match extract_model(&body_bytes) {
@@ -162,6 +158,11 @@ async fn handle_request(State(state): State<AppState>, req: Request<Body>) -> Re
             return error_response(StatusCode::BAD_REQUEST, "Missing model field");
         }
     };
+
+    info!(
+        "Request received - protocol: {:?}, model: {}, path: {}",
+        client_protocol, requested_model, request_path
+    );
 
     // 获取路由配置
     let route_configs = match state
@@ -178,13 +179,8 @@ async fn handle_request(State(state): State<AppState>, req: Request<Body>) -> Re
 
     // 判断是否是流式请求
     let is_stream = ProtocolDetector::is_stream_request(&body_bytes);
-    debug!(
-        "tell me: will check stream request, is_stream={}",
-        is_stream
-    );
 
     if is_stream {
-        debug!("tell me: will enter handle_stream");
         handle_stream(
             state,
             route_configs,
@@ -340,9 +336,6 @@ async fn handle_stream(
     request_path: String,
     client_headers: reqwest::header::HeaderMap,
 ) -> Response<Body> {
-    debug!("tell me: will start handle_stream function");
-    debug!("tell me: will try {} route configs", route_configs.len());
-
     // 生成请求ID用于去重
     let request_id = Uuid::new_v4().to_string();
 
@@ -355,17 +348,8 @@ async fn handle_stream(
 
     // 尝试每个路由配置
     for (index, config) in route_configs.iter().enumerate() {
-        debug!(
-            "tell me: will try route config #{} for endpoint {}",
-            index + 1,
-            config.api_endpoint
-        );
         let target_protocol = &config.protocol;
 
-        debug!(
-            "tell me: will transform request from {:?} to {:?}",
-            client_protocol, target_protocol
-        );
         // 将请求转换为目标协议格式
         let transformed_request = match state
             .adapter
@@ -377,29 +361,20 @@ async fn handle_stream(
             )
             .await
         {
-            Ok(body) => {
-                debug!("tell me: transform request completed successfully");
-                body
-            }
+            Ok(body) => body,
             Err(e) => {
                 error!("Failed to transform request: {}", e);
-                debug!("tell me: transform request failed, will continue to next route");
                 continue;
             }
         };
 
         // 使用新的 stream 接口获取纯粹的字节流
-        debug!(
-            "tell me: will call proxy.stream for endpoint {}",
-            config.api_endpoint
-        );
         match state
             .proxy
             .stream(&config, transformed_request, custom_path, &client_headers)
             .await
         {
             Ok(byte_stream) => {
-                debug!("tell me: proxy.stream returned successfully");
 
                 // 创建Usage收集器来收集流式响应的token使用情况（在协议转换前）
                 let usage_collector = Arc::new(StreamUsageCollector::new(
@@ -419,7 +394,6 @@ async fn handle_stream(
                     .await
                 {
                     Ok(transformed_stream) => {
-                        debug!("tell me: stream transformed successfully, will build SSE response");
                         // 在 Transport 层构建流式响应
                         // 设置 SSE 必要的响应头
                         let response = Response::builder()
@@ -431,19 +405,16 @@ async fn handle_stream(
                             .body(Body::from_stream(transformed_stream))
                             .unwrap();
 
-                        debug!("tell me: will return stream response");
                         return response;
                     }
                     Err(e) => {
                         error!("Failed to transform stream: {}", e);
-                        debug!("tell me: stream transformation failed");
                         continue;
                     }
                 }
             }
             Err(e) => {
                 error!("Stream request failed for {}: {}", config.api_endpoint, e);
-                debug!("tell me: proxy.stream failed for {}", config.api_endpoint);
 
                 // 上报错误
                 state.telemetry.report_error(ErrorEvent {
@@ -470,7 +441,6 @@ async fn handle_stream(
     }
 
     // 所有路由都失败
-    debug!("tell me: all stream routes failed, will return error response");
     error_response(StatusCode::SERVICE_UNAVAILABLE, "All stream routes failed")
 }
 

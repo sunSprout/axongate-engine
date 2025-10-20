@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use futures::Stream;
 use futures::StreamExt;
 use bytes::Bytes;
-use tracing::debug;
+use tracing::{error, info, trace, warn};
 use crate::models::{UsageEvent, TargetProtocol, RouteConfig};
 use crate::telemetry::TelemetryModule;
 use crate::Result;
@@ -44,12 +44,12 @@ impl StreamUsageCollector {
         let chunk_str = match std::str::from_utf8(chunk) {
             Ok(s) => s,
             Err(e) => {
-                debug!("Usage Collector - Invalid UTF-8 in chunk: {}", e);
+                trace!("Usage Collector - Invalid UTF-8 in chunk: {}", e);
                 return;
             }
         };
 
-        debug!("Usage Collector - Processing chunk ({} bytes)", chunk.len());
+        trace!("Usage Collector - Processing chunk ({} bytes)", chunk.len());
 
         // 追加到缓冲区
         let mut buffer = self.buffer.lock().unwrap();
@@ -64,7 +64,7 @@ impl StreamUsageCollector {
                 // 移除已处理的事件（包括\n\n）
                 *buffer = buffer[event_end + 2..].to_string();
 
-                debug!("Usage Collector - Found complete SSE event");
+                trace!("Usage Collector - Found complete SSE event");
 
                 // 解析SSE事件
                 self.parse_and_process_sse_event(&event);
@@ -76,7 +76,7 @@ impl StreamUsageCollector {
 
         // 如果缓冲区太大（超过1MB），清空以防止内存泄漏
         if buffer.len() > 1024 * 1024 {
-            debug!("Usage Collector - Buffer too large, clearing");
+            trace!("Usage Collector - Buffer too large, clearing");
             buffer.clear();
         }
     }
@@ -105,127 +105,127 @@ impl StreamUsageCollector {
 
         // 跳过 [DONE] 标记
         if data.trim() == "[DONE]" {
-            debug!("Usage Collector - Skipping [DONE] marker");
+            trace!("Usage Collector - Skipping [DONE] marker");
             return;
         }
 
-        debug!("Usage Collector - Event type: {:?}, Data length: {} bytes", event_type, data.len());
+        trace!("Usage Collector - Event type: {:?}, Data length: {} bytes", event_type, data.len());
 
         // 尝试解析JSON
         match serde_json::from_str::<serde_json::Value>(&data) {
             Ok(json) => {
-                debug!("Usage Collector - Successfully parsed JSON");
+                trace!("Usage Collector - Successfully parsed JSON");
                 self.extract_usage_from_json(&json);
             }
             Err(e) => {
-                debug!("Usage Collector - Failed to parse JSON: {}", e);
+                trace!("Usage Collector - Failed to parse JSON: {}", e);
             }
         }
     }
 
     /// 从JSON中提取usage信息
     fn extract_usage_from_json(&self, json: &serde_json::Value) {
-        debug!("Usage Collector - Extracting usage from JSON, protocol: {:?}", self.route_config.protocol);
+        trace!("Usage Collector - Extracting usage from JSON, protocol: {:?}", self.route_config.protocol);
 
         match &self.route_config.protocol {
             TargetProtocol::Anthropic => {
-                debug!("Usage Collector - Processing Anthropic protocol");
+                trace!("Usage Collector - Processing Anthropic protocol");
 
                 // 检查JSON结构
                 if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
-                    debug!("Usage Collector - Found event type: {}", event_type);
+                    trace!("Usage Collector - Found event type: {}", event_type);
 
                     match event_type {
                         "message_start" => {
-                            debug!("Usage Collector - Processing message_start event");
+                            trace!("Usage Collector - Processing message_start event");
 
                             // message_start 包含 input_tokens
                             if let Some(message) = json.get("message") {
-                                debug!("Usage Collector - Found message object: {}", serde_json::to_string(message).unwrap_or_else(|_| "Invalid".to_string()));
+                                trace!("Usage Collector - Found message object: {}", serde_json::to_string(message).unwrap_or_else(|_| "Invalid".to_string()));
 
                                 if let Some(usage) = message.get("usage") {
-                                    debug!("Usage Collector - Found usage in message: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
+                                    trace!("Usage Collector - Found usage in message: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
 
                                     if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_i64()) {
                                         *self.input_tokens.lock().unwrap() = Some(input as i32);
-                                        debug!("Usage Collector - Collected input_tokens: {}", input);
+                                        trace!("Usage Collector - Collected input_tokens: {}", input);
                                     } else {
-                                        debug!("Usage Collector - No input_tokens found in usage");
+                                        trace!("Usage Collector - No input_tokens found in usage");
                                     }
                                 } else {
-                                    debug!("Usage Collector - No usage found in message");
+                                    trace!("Usage Collector - No usage found in message");
                                 }
                             } else {
-                                debug!("Usage Collector - No message object found");
+                                trace!("Usage Collector - No message object found");
                             }
                         }
                         "message_delta" => {
-                            debug!("Usage Collector - Processing message_delta event");
+                            trace!("Usage Collector - Processing message_delta event");
 
                             // message_delta 包含累积的 output_tokens
                             if let Some(usage) = json.get("usage") {
-                                debug!("Usage Collector - Found usage in delta: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
+                                trace!("Usage Collector - Found usage in delta: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
 
                                 if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_i64()) {
                                     *self.output_tokens.lock().unwrap() = Some(output as i32);
-                                    debug!("Usage Collector - Updated output_tokens: {}", output);
+                                    trace!("Usage Collector - Updated output_tokens: {}", output);
                                 } else {
-                                    debug!("Usage Collector - No output_tokens found in usage");
+                                    trace!("Usage Collector - No output_tokens found in usage");
                                 }
                             } else {
-                                debug!("Usage Collector - No usage found in message_delta");
+                                trace!("Usage Collector - No usage found in message_delta");
                             }
                         }
                         "message_stop" => {
-                            debug!("Usage Collector - Processing message_stop event, triggering usage report");
+                            trace!("Usage Collector - Processing message_stop event, triggering usage report");
                             // 流结束，触发上报
                             self.report_usage();
                         }
                         _ => {
-                            debug!("Usage Collector - Unhandled event type: {}", event_type);
+                            trace!("Usage Collector - Unhandled event type: {}", event_type);
                         }
                     }
                 } else {
-                    debug!("Usage Collector - No 'type' field found in JSON");
+                    trace!("Usage Collector - No 'type' field found in JSON");
                     // 尝试查找其他可能的usage字段
                     if let Some(usage) = json.get("usage") {
-                        debug!("Usage Collector - Found direct usage field: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
+                        trace!("Usage Collector - Found direct usage field: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
                     }
                 }
             }
             TargetProtocol::OpenAI | TargetProtocol::Custom(_) => {
-                debug!("Usage Collector - Processing OpenAI/Custom protocol");
+                trace!("Usage Collector - Processing OpenAI/Custom protocol");
 
                 // 首先检查是否是 Codex 的 response.completed 或 response.done 事件
                 if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
-                    debug!("Usage Collector - Found event type: {}", event_type);
+                    trace!("Usage Collector - Found event type: {}", event_type);
 
                     if event_type == "response.completed" || event_type == "response.done" {
-                        debug!("Usage Collector - Processing Codex {} event", event_type);
+                        trace!("Usage Collector - Processing Codex {} event", event_type);
 
                         // Codex 的 usage 信息在 response.usage 嵌套对象中
                         if let Some(response) = json.get("response") {
                             if let Some(usage) = response.get("usage") {
-                                debug!("Usage Collector - Found Codex usage: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
+                                trace!("Usage Collector - Found Codex usage: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
 
                                 // Codex 使用 input_tokens 和 output_tokens (类似 Anthropic)
                                 if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_i64()) {
                                     *self.input_tokens.lock().unwrap() = Some(input as i32);
-                                    debug!("Usage Collector - Collected Codex input_tokens: {}", input);
+                                    trace!("Usage Collector - Collected Codex input_tokens: {}", input);
                                 }
                                 if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_i64()) {
                                     *self.output_tokens.lock().unwrap() = Some(output as i32);
-                                    debug!("Usage Collector - Collected Codex output_tokens: {}", output);
+                                    trace!("Usage Collector - Collected Codex output_tokens: {}", output);
                                 }
 
                                 // response.completed 表示流结束,触发上报
-                                debug!("Usage Collector - Codex stream completed, triggering usage report");
+                                trace!("Usage Collector - Codex stream completed, triggering usage report");
                                 self.report_usage();
                             } else {
-                                debug!("Usage Collector - No usage found in Codex response object");
+                                trace!("Usage Collector - No usage found in Codex response object");
                             }
                         } else {
-                            debug!("Usage Collector - No response object found in Codex event");
+                            trace!("Usage Collector - No response object found in Codex event");
                         }
                         return; // 已处理,直接返回
                     }
@@ -234,7 +234,7 @@ impl StreamUsageCollector {
                 // 标准 OpenAI 流式响应
                 // 检查是否有usage字段（通常在最后一个chunk）
                 if let Some(usage) = json.get("usage") {
-                    debug!("Usage Collector - Found OpenAI usage: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
+                    trace!("Usage Collector - Found OpenAI usage: {}", serde_json::to_string(usage).unwrap_or_else(|_| "Invalid".to_string()));
 
                     // 支持两种字段名: prompt_tokens/completion_tokens (OpenAI) 和 input_tokens/output_tokens (兼容)
                     if let Some(input) = usage.get("prompt_tokens")
@@ -242,19 +242,19 @@ impl StreamUsageCollector {
                         .and_then(|v| v.as_i64())
                     {
                         *self.input_tokens.lock().unwrap() = Some(input as i32);
-                        debug!("Usage Collector - Collected input tokens: {}", input);
+                        trace!("Usage Collector - Collected input tokens: {}", input);
                     }
                     if let Some(output) = usage.get("completion_tokens")
                         .or_else(|| usage.get("output_tokens"))
                         .and_then(|v| v.as_i64())
                     {
                         *self.output_tokens.lock().unwrap() = Some(output as i32);
-                        debug!("Usage Collector - Collected output tokens: {}", output);
+                        trace!("Usage Collector - Collected output tokens: {}", output);
                         // OpenAI在有usage时通常意味着流结束
                         self.report_usage();
                     }
                 } else {
-                    debug!("Usage Collector - No usage found in OpenAI response");
+                    trace!("Usage Collector - No usage found in OpenAI response");
                 }
             }
         }
@@ -265,12 +265,11 @@ impl StreamUsageCollector {
         let input = self.input_tokens.lock().unwrap().clone();
         let output = self.output_tokens.lock().unwrap().clone();
 
-        debug!("Usage Collector - Attempting to report usage: input={:?}, output={:?}", input, output);
+        trace!("Usage Collector - Attempting to report usage: input={:?}, output={:?}", input, output);
 
         if let (Some(input_tokens), Some(output_tokens)) = (input, output) {
-            debug!("Usage Collector - Reporting usage: input={}, output={}", input_tokens, output_tokens);
-            debug!("Usage Collector - Usage event details: request_id={}, model={}, api={}",
-                   self.request_id, self.route_config.model, self.route_config.api_endpoint);
+            info!("Usage reported: input={}, output={}, model={}",
+                  input_tokens, output_tokens, self.route_config.model);
 
             self.telemetry.report_usage(UsageEvent {
                 request_id: self.request_id.clone(),
@@ -284,10 +283,8 @@ impl StreamUsageCollector {
                 provider_id: self.route_config.provider_id.clone(),
                 provider_token_id: self.route_config.provider_token_id.clone(),
             });
-
-            debug!("Usage Collector - Usage report sent successfully");
         } else {
-            debug!("Usage Collector - Cannot report usage: missing tokens (input={:?}, output={:?})", input, output);
+            warn!("Cannot report usage: missing tokens (input={:?}, output={:?})", input, output);
         }
     }
 
