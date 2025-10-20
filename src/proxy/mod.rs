@@ -279,6 +279,17 @@ impl ProxyForwarder {
 
         info!("Upstream success response status: {}", status);
         let body = response.bytes().await.map_err(|e| Error::Http(e))?;
+
+        // 记录响应体大小和内容预览，帮助调试
+        let body_size = body.len();
+        let preview = if body_size > 0 {
+            let preview_len = std::cmp::min(200, body_size);
+            String::from_utf8_lossy(&body[..preview_len])
+        } else {
+            std::borrow::Cow::Borrowed("<empty>")
+        };
+        info!("Upstream response body size: {} bytes, preview: {}", body_size, preview);
+
         Ok(body)
     }
 

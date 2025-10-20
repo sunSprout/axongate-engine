@@ -661,7 +661,20 @@ impl ProtocolAdapter for UniversalAdapter {
         target_protocol: &ClientProtocol,
         response_body: Bytes,
     ) -> Result<Bytes> {
-        let json_value: Value = serde_json::from_slice(&response_body)?;
+        // 尝试解析JSON，提供更有意义的错误信息
+        let json_value: Value = serde_json::from_slice(&response_body).map_err(|e| {
+            let body_size = response_body.len();
+            let preview = if body_size > 0 {
+                let preview_len = std::cmp::min(100, body_size);
+                format!("'{}...'", String::from_utf8_lossy(&response_body[..preview_len]))
+            } else {
+                "<empty>".to_string()
+            };
+            Error::Protocol(format!(
+                "Failed to parse response as JSON: {}. Body size: {} bytes, preview: {}",
+                e, body_size, preview
+            ))
+        })?;
 
         let transformed = match (source_protocol, target_protocol) {
             (TargetProtocol::OpenAI, ClientProtocol::OpenAI) => json_value,

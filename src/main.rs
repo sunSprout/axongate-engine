@@ -180,6 +180,11 @@ async fn handle_request(State(state): State<AppState>, req: Request<Body>) -> Re
     // 判断是否是流式请求
     let is_stream = ProtocolDetector::is_stream_request(&body_bytes);
 
+    info!(
+        "Request routing - stream: {}, protocol: {:?}, model: {}, path: {}",
+        is_stream, client_protocol, requested_model, request_path
+    );
+
     if is_stream {
         handle_stream(
             state,
@@ -513,6 +518,15 @@ async fn handle_non_stream(
                         provider_id: config.provider_id.clone(),
                         provider_token_id: config.provider_token_id.clone(),
                     });
+                }
+
+                // 验证响应体非空
+                if response_body.is_empty() {
+                    error!(
+                        "Empty response body from upstream: endpoint={}, model={}, protocol={:?}",
+                        config.api_endpoint, config.model, target_protocol
+                    );
+                    continue;
                 }
 
                 // 转换响应
