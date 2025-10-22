@@ -1,8 +1,8 @@
-use ai_gateway_engine::{
+use axongate_engine::{
     cache::Cache,
     config::Config,
     error::Error,
-    models::{ClientProtocol, ErrorEvent, RouteConfig, UsageEvent},
+    models::{ClientProtocol, ErrorEvent, RouteConfig, UsageEvent, TargetProtocol},
     protocol::{adapter::UniversalAdapter, detector::ProtocolDetector, ProtocolAdapter},
     proxy::ProxyForwarder,
     router::Router,
@@ -20,7 +20,7 @@ use axum::{
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -258,21 +258,21 @@ fn filter_client_headers(req: &Request<Body>) -> reqwest::header::HeaderMap {
 
 // 从响应中提取usage信息
 fn extract_usage_from_response(
-    protocol: &ai_gateway_engine::models::TargetProtocol,
+    protocol: &TargetProtocol,
     body: &[u8],
 ) -> Option<(i32, i32)> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     let usage = v.get("usage")?;
 
     match protocol {
-        ai_gateway_engine::models::TargetProtocol::OpenAI
-        | ai_gateway_engine::models::TargetProtocol::Custom(_) => {
+        TargetProtocol::OpenAI
+        | TargetProtocol::Custom(_) => {
             // OpenAI格式: { "prompt_tokens": N, "completion_tokens": M }
             let input = usage.get("prompt_tokens")?.as_i64()? as i32;
             let output = usage.get("completion_tokens")?.as_i64()? as i32;
             Some((input, output))
         }
-        ai_gateway_engine::models::TargetProtocol::Anthropic => {
+        TargetProtocol::Anthropic => {
             // Anthropic格式: { "input_tokens": N, "output_tokens": M }
             let input = usage.get("input_tokens")?.as_i64()? as i32;
             let output = usage.get("output_tokens")?.as_i64()? as i32;
